@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: astrapay-app
+  namespace: astrapay
+  labels:
+    app: astrapay-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: astrapay-app
+  template:
+    metadata:
+      labels:
+        app: astrapay-app
+    spec:
+      containers:
+      - name: astrapay-app
+        image: ghcr.io/kenttannady/astrapay-spring-boot-external:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "kubernetes"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8000
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: config-volume
+        configMap:
+          name: astrapay-config
+      imagePullSecrets: []
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: astrapay-service
+  namespace: astrapay
+spec:
+  selector:
+    app: astrapay-app
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+  type: LoadBalancer
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: astrapay-ingress
+  namespace: astrapay
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+  - host: astrapay.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: astrapay-service
+            port:
+              number: 8000

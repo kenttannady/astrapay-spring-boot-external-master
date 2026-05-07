@@ -1,0 +1,71 @@
+services:
+  astrapay-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: astrapay-spring-boot
+    ports:
+      - "8000:8000"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - JAVA_OPTS=-Xms512m -Xmx1024m
+    networks:
+      - astrapay-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgres-db
+
+  postgres-db:
+    image: postgres:13-alpine
+    container_name: astrapay-postgres
+    environment:
+      - POSTGRES_DB=astrapay_db
+      - POSTGRES_USER=astrapay_user
+      - POSTGRES_PASSWORD=astrapay_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/main/resources/sql:/docker-entrypoint-initdb.d
+    networks:
+      - astrapay-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astrapay_user -d astrapay_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-cache:
+    image: redis:6-alpine
+    container_name: astrapay-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - astrapay-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  astrapay-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
