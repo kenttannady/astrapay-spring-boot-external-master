@@ -16,9 +16,10 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       
-    - name: Build Docker image
+    - name: Build Docker image (local only)
       run: |
-        docker buildx build --push --tag ghcr.io/kenttannady/astrapay-spring-boot-external:latest .
+        echo "🔨 Building Docker image for local deployment..."
+        docker build -t astrapay-spring-boot-external:latest .
         
     - name: Set up kubectl
       uses: azure/setup-kubectl@v3
@@ -43,3 +44,11 @@ jobs:
         echo "🌐 Access application:"
         echo "   kubectl port-forward service/astrapay-service 8000:8000 -n astrapay"
         echo "   Then open: http://localhost:8000"
+        
+    - name: Health Check
+      run: |
+        echo "🔍 Verifying deployment health..."
+        sleep 30
+        kubectl wait --for=condition=ready pod -l app=astrapay-app -n astrapay --timeout=300s
+        echo "✅ Application is healthy and ready!"
+
