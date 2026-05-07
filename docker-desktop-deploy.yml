@@ -1,0 +1,45 @@
+name: Docker Desktop Deploy
+
+on:
+  push:
+    branches: [ develop, main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build Docker image
+      run: |
+        docker buildx build --push --tag ghcr.io/kenttannady/astrapay-spring-boot-external:latest .
+        
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Deploy to Docker Desktop
+      run: |
+        echo "🚀 Deploying to Docker Desktop Kubernetes..."
+        
+        # Apply all Kubernetes resources
+        kubectl apply -k k8s/
+        
+        # Wait for deployment
+        kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
+        
+        # Get deployment status
+        kubectl get pods -n astrapay
+        kubectl get services -n astrapay
+        
+        echo "✅ Deployment completed!"
+        echo "🌐 Access application:"
+        echo "   kubectl port-forward service/astrapay-service 8000:8000 -n astrapay"
+        echo "   Then open: http://localhost:8000"
