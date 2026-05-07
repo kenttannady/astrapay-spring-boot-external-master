@@ -1,0 +1,183 @@
+name: CI/CD Pipeline for AstraPay Spring Boot
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  # Manual trigger for local deployment
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Run tests
+      run: mvn clean test
+      
+    - name: Generate test report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Maven Tests
+        path: target/surefire-reports/*.xml
+        reporter: java-junit
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+          
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  deploy-to-k8s:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+  deploy-to-docker-desktop:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl for Docker Desktop
+      run: |
+        # For Docker Desktop, we need to use a different approach
+        echo "Configuring for local Docker Desktop deployment"
+        # Create a simple deployment script for local use
+        cat > deploy-local.sh << 'EOF'
+        #!/bin/bash
+        echo "Deploying to local Docker Desktop Kubernetes..."
+        
+        # Apply all Kubernetes resources
+        kubectl apply -k k8s/
+        
+        # Wait for deployment
+        kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
+        
+        # Get deployment status
+        kubectl get pods -n astrapay
+        kubectl get services -n astrapay
+        
+        echo "Deployment completed!"
+        echo "Access application with: kubectl port-forward service/astrapay-service 8000:8000 -n astrapay"
+        EOF
+        
+        chmod +x deploy-local.sh
+        
+    - name: Upload deployment script
+      uses: actions/upload-artifact@v3
+      with:
+        name: deploy-script
+        path: deploy-local.sh
+        
+    - name: Create deployment instructions
+      run: |
+        echo "## 🚀 Docker Desktop Deployment Instructions" > deployment-instructions.md
+        echo "" >> deployment-instructions.md
+        echo "### Prerequisites:" >> deployment-instructions.md
+        echo "- Docker Desktop with Kubernetes enabled" >> deployment-instructions.md
+        echo "- kubectl configured to use Docker Desktop" >> deployment-instructions.md
+        echo "" >> deployment-instructions.md
+        echo "### Deployment Steps:" >> deployment-instructions.md
+        echo "1. Download the deployment script from GitHub Actions artifacts" >> deployment-instructions.md
+        echo "2. Run: \`./deploy-local.sh\`" >> deployment-instructions.md
+        echo "3. Access app: \`kubectl port-forward service/astrapay-service 8000:8000 -n astrapay\`" >> deployment-instructions.md
+        echo "4. Open browser: http://localhost:8000" >> deployment-instructions.md
+        echo "" >> deployment-instructions.md
+        echo "### Manual Deployment:" >> deployment-instructions.md
+        echo "Alternatively, run manually:" >> deployment-instructions.md
+        echo "\`\`\`bash" >> deployment-instructions.md
+        echo "kubectl apply -k k8s/" >> deployment-instructions.md
+        echo "kubectl rollout status deployment/astrapay-app -n astrapay" >> deployment-instructions.md
+        echo "\`\`\`" >> deployment-instructions.md
+        
+    - name: Upload deployment instructions
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-instructions
+        path: deployment-instructions.md
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
