@@ -86,6 +86,59 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        
+    - name: Deploy to Kubernetes
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Create namespace if not exists
+        kubectl apply -f k8s/namespace.yaml
+        
+        # Apply secrets
+        kubectl apply -f k8s/secret.yaml
+        
+        # Update image tag in deployment
+        sed -i 's|astrapay/spring-boot-external:latest|${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}|g' k8s/app-deployment.yaml
+        
+        # Deploy all resources
+        kubectl apply -k k8s/
+        
+        # Wait for deployment
+        kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
+        
+        # Get deployment status
+        kubectl get pods -n astrapay
+        kubectl get services -n astrapay
+        
+    - name: Verify deployment
+      run: |
+        export KUBECONFIG=kubeconfig
+        
+        # Check if pods are running
+        kubectl wait --for=condition=ready pod -l app=astrapay-app -n astrapay --timeout=300s
+        
+        # Get service URL
+        SERVICE_IP=$(kubectl get service astrapay-service -n astrapay -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        if [ -z "$SERVICE_IP" ]; then
+          echo "Service not ready yet or using NodePort"
+          kubectl get service astrapay-service -n astrapay
+        else
+          echo "Application deployed at: http://$SERVICE_IP:8000"
+        fi
+        
   deploy-to-docker-desktop:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -181,3 +234,4 @@ jobs:
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
+
