@@ -8,110 +8,93 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
-
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      
+    - name: Debug Environment
+      run: |
+        echo "Current user: $(whoami)"
+        echo "Home: $HOME"
+        echo "Kubeconfig: $KUBECONFIG"
+        ls -la ~/.kube/config || echo "No kubeconfig found"
+        docker ps
+      
+    - name: Setup kubeconfig for Docker Desktop
+      run: |
+        # Docker Desktop Kubernetes context
+        mkdir -p ~/.kube
+        
+        # Cek apakah Docker Desktop Kubernetes running
+        if docker ps | grep -q kube; then
+          echo "✅ Docker Desktop Kubernetes detected"
+          
+          # Gunakan config default dari Docker Desktop
+          if [ -f ~/.kube/config ]; then
+            kubectl config use-context docker-desktop || true
+          else
+            # Create minimal kubeconfig
+            kubectl config set-cluster docker-desktop \
+              --server=https://kubernetes.docker.internal:6443 \
+              --insecure-skip-tls-verify=true
+            kubectl config set-context docker-desktop \
+              --cluster=docker-desktop --user=docker-desktop
+            kubectl config use-context docker-desktop
+          fi
+        else
+          echo "⚠️ Docker Desktop Kubernetes not running, starting it..."
+          # Trigger Docker Desktop to start k8s (macOS/Windows specific)
+          osascript -e 'tell application "Docker" to activate' 2>/dev/null || true
+          sleep 10
+        fi
+        
+        # Test connection
+        kubectl cluster-info --context=docker-desktop || {
+          echo "Failed to connect to Kubernetes"
+          echo "Please ensure Docker Desktop Kubernetes is enabled"
+          exit 1
+        }
       
     - name: Build Docker image
       run: |
         echo "🔨 Building Docker image..."
         docker build -t astrapay-spring-boot-external:latest .
+        docker images | grep astrapay
         
-    - name: Install kubectl
-      run: |
-        echo "📦 Installing kubectl..."
-        # Check if kubectl is already installed
-        if ! command -v kubectl &> /dev/null; then
-          # Install kubectl for Linux
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-        else
-          echo "kubectl already installed"
-        fi
-        kubectl version --client
-        
-    - name: Configure kubectl for Docker Desktop
-      run: |
-        echo "🔧 Configuring kubectl for Docker Desktop..."
-        
-        # Create kubeconfig directory
-        mkdir -p ~/.kube
-        
-        # Create kubeconfig using Python (more reliable)
-        python3 << 'EOF'
-import yaml
-import os
-
-config = {
-    "apiVersion": "v1",
-    "clusters": [{
-        "cluster": {
-            "certificate-authority-data": "",
-            "server": "https://kubernetes.docker.internal:6443"
-        },
-        "name": "docker-desktop"
-    }],
-    "contexts": [{
-        "context": {
-            "cluster": "docker-desktop",
-            "user": "docker-desktop"
-        },
-        "name": "docker-desktop"
-    }],
-    "current-context": "docker-desktop",
-    "kind": "Config",
-    "preferences": {},
-    "users": [{
-        "name": "docker-desktop",
-        "user": {
-            "client-certificate-data": "",
-            "client-key-data": "",
-            "token": ""
-        }
-    }]
-}
-
-with open('/root/.kube/config', 'w') as f:
-    yaml.dump(config, f, default_flow_style=False)
-EOF
-        
-        # Set environment
-        export KUBECONFIG=/root/.kube/config
-        
-        # Test connection
-        kubectl cluster-info || echo "Warning: Cannot connect to cluster, will continue with deployment"
-        
-    - name: Deploy to Docker Desktop Kubernetes
+    - name: Deploy to Kubernetes
       run: |
         echo "🚀 Deploying to Docker Desktop Kubernetes..."
         
-        export KUBECONFIG=/root/.kube/config
+        # Apply all k8s manifests
+        kubectl apply -f k8s/ --validate=false || {
+          echo "Deployment failed"
+          exit 1
+        }
         
-        # Apply individual YAML files with server validation disabled
-        kubectl apply -f k8s/namespace.yaml --validate=false --server-side=false
-        kubectl apply -f k8s/configmap.yaml --validate=false --server-side=false
-        kubectl apply -f k8s/secret.yaml --validate=false --server-side=false
-        kubectl apply -f k8s/app-deployment.yaml --validate=false --server-side=false
-        kubectl apply -f k8s/postgres-deployment.yaml --validate=false --server-side=false
-        kubectl apply -f k8s/redis-deployment.yaml --validate=false --server-side=false
+        # Wait for pods
+        kubectl wait --for=condition=ready pod \
+          -l app=astrapay-app -n astrapay \
+          --timeout=300s || true
         
-        # Wait for deployment
-        kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
-        
-        # Get deployment status
-        kubectl get pods -n astrapay
-        kubectl get services -n astrapay
-        
-        echo "✅ Deployment completed!"
-        echo "🌐 Access application:"
-        echo "   kubectl port-forward service/astrapay-service 8000:8000 -n astrapay"
-        echo "   Then open: http://localhost:8000"
+        # Show status
+        kubectl get all -n astrapay
         
     - name: Health Check
       run: |
-        echo "🔍 Verifying deployment health..."
-        sleep 30
-        kubectl wait --for=condition=ready pod -l app=astrapay-app -n astrapay --timeout=300s
-        echo "✅ Application is healthy and ready!"
+        echo "🔍 Health check..."
+        
+        # Port forward in background
+        kubectl port-forward svc/astrapay-service 8000:8000 -n astrapay &
+        PF_PID=$!
+        sleep 5
+        
+        # Test endpoint
+        curl -f http://localhost:8000/actuator/health || {
+          echo "❌ Health check failed"
+          kill $PF_PID
+          exit 1
+        }
+        
+        kill $PF_PID
+        echo "✅ Deployment successful!"
