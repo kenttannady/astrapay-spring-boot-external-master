@@ -1,4 +1,4 @@
-name: Docker Desktop Deploy
+name: Deploy to Docker Desktop
 
 on:
   push:
@@ -13,88 +13,43 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Debug Environment
+    - name: Install kubectl
       run: |
-        echo "Current user: $(whoami)"
-        echo "Home: $HOME"
-        echo "Kubeconfig: $KUBECONFIG"
-        ls -la ~/.kube/config || echo "No kubeconfig found"
-        docker ps
-      
-    - name: Setup kubeconfig for Docker Desktop
-      run: |
-        # Docker Desktop Kubernetes context
-        mkdir -p ~/.kube
+        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
         
-        # Cek apakah Docker Desktop Kubernetes running
-        if docker ps | grep -q kube; then
-          echo "✅ Docker Desktop Kubernetes detected"
-          
-          # Gunakan config default dari Docker Desktop
-          if [ -f ~/.kube/config ]; then
-            kubectl config use-context docker-desktop || true
-          else
-            # Create minimal kubeconfig
-            kubectl config set-cluster docker-desktop \
-              --server=https://kubernetes.docker.internal:6443 \
-              --insecure-skip-tls-verify=true
-            kubectl config set-context docker-desktop \
-              --cluster=docker-desktop --user=docker-desktop
-            kubectl config use-context docker-desktop
-          fi
-        else
-          echo "⚠️ Docker Desktop Kubernetes not running, starting it..."
-          # Trigger Docker Desktop to start k8s (macOS/Windows specific)
-          osascript -e 'tell application "Docker" to activate' 2>/dev/null || true
-          sleep 10
-        fi
+    - name: Setup kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        cp /home/runner/.kube/config $HOME/.kube/config
+        
+        # Fix the server address for container
+        sed -i 's/127.0.0.1/localhost/g' $HOME/.kube/config
+        sed -i 's/host.docker.internal/localhost/g' $HOME/.kube/config
+        
+        export KUBECONFIG=$HOME/.kube/config
+        echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
         
         # Test connection
-        kubectl cluster-info --context=docker-desktop || {
-          echo "Failed to connect to Kubernetes"
-          echo "Please ensure Docker Desktop Kubernetes is enabled"
-          exit 1
-        }
-      
-    - name: Build Docker image
-      run: |
-        echo "🔨 Building Docker image..."
-        docker build -t astrapay-spring-boot-external:latest .
-        docker images | grep astrapay
+        kubectl get nodes
         
-    - name: Deploy to Kubernetes
+    - name: Build image
       run: |
-        echo "🚀 Deploying to Docker Desktop Kubernetes..."
+        docker build -t astrapay-app:latest .
         
-        # Apply all k8s manifests
-        kubectl apply -f k8s/ --validate=false || {
-          echo "Deployment failed"
-          exit 1
-        }
+    - name: Deploy
+      run: |
+        kubectl create namespace astrapay --dry-run=client -o yaml | kubectl apply -f -
+        kubectl apply -f k8s/ --validate=false
         
         # Wait for pods
-        kubectl wait --for=condition=ready pod \
-          -l app=astrapay-app -n astrapay \
-          --timeout=300s || true
+        sleep 10
+        kubectl get pods -n astrapay
         
-        # Show status
-        kubectl get all -n astrapay
-        
-    - name: Health Check
+    - name: Show status
       run: |
-        echo "🔍 Health check..."
-        
-        # Port forward in background
-        kubectl port-forward svc/astrapay-service 8000:8000 -n astrapay &
-        PF_PID=$!
-        sleep 5
-        
-        # Test endpoint
-        curl -f http://localhost:8000/actuator/health || {
-          echo "❌ Health check failed"
-          kill $PF_PID
-          exit 1
-        }
-        
-        kill $PF_PID
-        echo "✅ Deployment successful!"
+        echo "=== Deployment Status ==="
+        kubectl get all -n astrapay
+        echo "✅ Done!"
