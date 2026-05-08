@@ -40,7 +40,7 @@ jobs:
         mkdir -p ~/.kube
         
         # Configure kubectl to use Docker Desktop Kubernetes
-        cat > ~/.kube/config << 'EOF'
+        cat > ~/.kube/config << EOF
 apiVersion: v1
 clusters:
 - cluster:
