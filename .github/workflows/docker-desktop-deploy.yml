@@ -36,18 +36,33 @@ jobs:
       run: |
         echo "🔧 Configuring kubectl for Docker Desktop..."
         
-        # Create kubeconfig directory
+        # Create kubeconfig directory and simple config
         mkdir -p ~/.kube
         
-        # Configure kubectl using kubectl config commands (more reliable)
-        kubectl config set-cluster docker-desktop --server=https://kubernetes.docker.internal:6443
-        kubectl config set-context docker-desktop --cluster=docker-desktop --user=docker-desktop
-        kubectl config use-context docker-desktop
-        kubectl config set-credentials docker-desktop --exec-command=exec --api-version=v1.22 --exec-args=command
+        # Create minimal kubeconfig file
+        cat > ~/.kube/config << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://kubernetes.docker.internal:6443
+    name: docker-desktop
+contexts:
+- context:
+    cluster: docker-desktop
+    user: docker-desktop
+    name: docker-desktop
+current-context: docker-desktop
+kind: Config
+preferences: {}
+users:
+- name: docker-desktop
+  user:
+    client-certificate-data: ""
+    client-key-data: ""
+    token: ""
+EOF
         
-        # Verify configuration
-        kubectl config view || echo "Warning: Configuration may have issues"
-        
+        # Set environment
         export KUBECONFIG=~/.kube/config
         
         # Test connection
