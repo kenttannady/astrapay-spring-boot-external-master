@@ -36,34 +36,49 @@ jobs:
       run: |
         echo "🔧 Configuring kubectl for Docker Desktop..."
         
-        # Create kubeconfig directory and simple config
+        # Create kubeconfig directory
         mkdir -p ~/.kube
         
-        # Create minimal kubeconfig file
-        cat > ~/.kube/config << 'EOF'
-apiVersion: v1
-clusters:
-- cluster:
-    server: https://kubernetes.docker.internal:6443
-    name: docker-desktop
-contexts:
-- context:
-    cluster: docker-desktop
-    user: docker-desktop
-    name: docker-desktop
-current-context: docker-desktop
-kind: Config
-preferences: {}
-users:
-- name: docker-desktop
-  user:
-    client-certificate-data: ""
-    client-key-data: ""
-    token: ""
+        # Create kubeconfig using Python (more reliable)
+        python3 << 'EOF'
+import yaml
+import os
+
+config = {
+    "apiVersion": "v1",
+    "clusters": [{
+        "cluster": {
+            "certificate-authority-data": "",
+            "server": "https://kubernetes.docker.internal:6443"
+        },
+        "name": "docker-desktop"
+    }],
+    "contexts": [{
+        "context": {
+            "cluster": "docker-desktop",
+            "user": "docker-desktop"
+        },
+        "name": "docker-desktop"
+    }],
+    "current-context": "docker-desktop",
+    "kind": "Config",
+    "preferences": {},
+    "users": [{
+        "name": "docker-desktop",
+        "user": {
+            "client-certificate-data": "",
+            "client-key-data": "",
+            "token": ""
+        }
+    }]
+}
+
+with open('/root/.kube/config', 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
 EOF
         
         # Set environment
-        export KUBECONFIG=~/.kube/config
+        export KUBECONFIG=/root/.kube/config
         
         # Test connection
         kubectl cluster-info || echo "Warning: Cannot connect to cluster, will continue with deployment"
@@ -72,7 +87,7 @@ EOF
       run: |
         echo "🚀 Deploying to Docker Desktop Kubernetes..."
         
-        export KUBECONFIG=~/.kube/config
+        export KUBECONFIG=/root/.kube/config
         
         # Apply individual YAML files with server validation disabled
         kubectl apply -f k8s/namespace.yaml --validate=false --server-side=false
