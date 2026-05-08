@@ -36,8 +36,13 @@ jobs:
       run: |
         echo "🚀 Deploying to Docker Desktop Kubernetes..."
         
-        # Apply all Kubernetes resources
-        kubectl apply -k k8s/
+        # Apply individual YAML files instead of kustomize
+        kubectl apply -f k8s/namespace.yaml --validate=false
+        kubectl apply -f k8s/configmap.yaml --validate=false
+        kubectl apply -f k8s/secret.yaml --validate=false
+        kubectl apply -f k8s/app-deployment.yaml --validate=false
+        kubectl apply -f k8s/postgres-deployment.yaml --validate=false
+        kubectl apply -f k8s/redis-deployment.yaml --validate=false
         
         # Wait for deployment
         kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
