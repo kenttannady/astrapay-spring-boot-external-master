@@ -32,17 +32,55 @@ jobs:
         fi
         kubectl version --client
         
+    - name: Configure kubectl for Docker Desktop
+      run: |
+        echo "🔧 Configuring kubectl for Docker Desktop..."
+        
+        # Create proper kubeconfig for Docker Desktop
+        mkdir -p ~/.kube
+        
+        # Configure kubectl to use Docker Desktop Kubernetes
+        cat > ~/.kube/config << 'EOF'
+        apiVersion: v1
+        clusters:
+        - cluster:
+            certificate-authority-data: ""
+            server: https://kubernetes.docker.internal:6443
+            name: docker-desktop
+        contexts:
+        - context:
+            cluster: docker-desktop
+            user: docker-desktop
+            name: docker-desktop
+        current-context: docker-desktop
+        kind: Config
+        preferences: {}
+        users:
+        - name: docker-desktop
+            user:
+                client-certificate-data: ""
+                client-key-data: ""
+                token: ""
+        EOF
+        
+        export KUBECONFIG=~/.kube/config
+        
+        # Test connection
+        kubectl cluster-info || echo "Warning: Cannot connect to cluster, will continue with deployment"
+        
     - name: Deploy to Docker Desktop Kubernetes
       run: |
         echo "🚀 Deploying to Docker Desktop Kubernetes..."
         
-        # Apply individual YAML files instead of kustomize
-        kubectl apply -f k8s/namespace.yaml --validate=false
-        kubectl apply -f k8s/configmap.yaml --validate=false
-        kubectl apply -f k8s/secret.yaml --validate=false
-        kubectl apply -f k8s/app-deployment.yaml --validate=false
-        kubectl apply -f k8s/postgres-deployment.yaml --validate=false
-        kubectl apply -f k8s/redis-deployment.yaml --validate=false
+        export KUBECONFIG=~/.kube/config
+        
+        # Apply individual YAML files with server validation disabled
+        kubectl apply -f k8s/namespace.yaml --validate=false --server-side=false
+        kubectl apply -f k8s/configmap.yaml --validate=false --server-side=false
+        kubectl apply -f k8s/secret.yaml --validate=false --server-side=false
+        kubectl apply -f k8s/app-deployment.yaml --validate=false --server-side=false
+        kubectl apply -f k8s/postgres-deployment.yaml --validate=false --server-side=false
+        kubectl apply -f k8s/redis-deployment.yaml --validate=false --server-side=false
         
         # Wait for deployment
         kubectl rollout status deployment/astrapay-app -n astrapay --timeout=300s
