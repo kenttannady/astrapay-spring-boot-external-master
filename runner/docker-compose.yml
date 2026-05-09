@@ -1,0 +1,22 @@
+services:
+  github-runner:
+    image: myoung34/github-runner:latest
+    container_name: astrapay-github-runner
+    restart: unless-stopped
+    environment:
+      REPO_URL: https://github.com/kenttannady/astrapay-spring-boot-external-master
+      RUNNER_NAME: docker-desktop-runner
+      ACCESS_TOKEN: ${GITHUB_ACCESS_TOKEN}
+      RUNNER_WORKDIR: /home/runner/work
+      RUNNER_SCOPE: repo
+      LABELS: self-hosted,docker-desktop,k8s-ready
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+      - ${USERPROFILE}/.kube:/home/runner/.kube:ro
+      - runner-data:/home/runner/actions-runner
+    network_mode: host
+    privileged: true
+
+volumes:
+  runner-data:

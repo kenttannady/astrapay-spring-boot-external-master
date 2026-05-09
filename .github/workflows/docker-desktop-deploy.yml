@@ -1,0 +1,55 @@
+name: Deploy to Docker Desktop
+
+on:
+  push:
+    branches: [ develop, main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        kubectl version --client
+        
+    - name: Setup kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        cp /home/runner/.kube/config $HOME/.kube/config
+        
+        # Fix the server address for container
+        sed -i 's/127.0.0.1/localhost/g' $HOME/.kube/config
+        sed -i 's/host.docker.internal/localhost/g' $HOME/.kube/config
+        
+        export KUBECONFIG=$HOME/.kube/config
+        echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
+        
+        # Test connection
+        kubectl get nodes
+        
+    - name: Build image
+      run: |
+        docker build -t astrapay-app:latest .
+        
+    - name: Deploy
+      run: |
+        kubectl create namespace astrapay --dry-run=client -o yaml | kubectl apply -f -
+        kubectl apply -f k8s/ --validate=false
+        
+        # Wait for pods
+        sleep 10
+        kubectl get pods -n astrapay
+        
+    - name: Show status
+      run: |
+        echo "=== Deployment Status ==="
+        kubectl get all -n astrapay
+        echo "✅ Done!"

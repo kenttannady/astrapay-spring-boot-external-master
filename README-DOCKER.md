@@ -68,6 +68,8 @@ docker-compose down -v
 ### Step 2: Deploy to Kubernetes
 
 ```bash
+#rubah kustomization.yaml.bak ke kustomization.yml
+
 # Apply all Kubernetes resources
 kubectl apply -k k8s/
 
@@ -103,26 +105,20 @@ kubectl exec -n astrapay deployment/astrapay-app -- curl "http://localhost:8000/
 
 ### Required Secrets
 
-Add these secrets to your GitHub repository:
+generate github token dari menu profile -> settings -> developer settings -> personal access tokens -> generate new token classic
 
-1. `KUBE_CONFIG`: Base64 encoded kubeconfig file
-   ```bash
-   # Generate base64 kubeconfig
-   cat ~/.kube/config | base64 -w 0
-   ```
+simpan token di .env di dalam folder runner.
+
+masuk ke dalam folder runner
+
+jalankan docker compose up -d 
+
+#rubah kustomization.yaml ke kustomization.yaml.bak
+
 
 ### Pipeline Triggers
 
-- **Push to `main`**: Full CI/CD pipeline (test → build → deploy)
-- **Push to `develop`**: CI pipeline only (test)
-- **Pull Request**: CI pipeline only (test)
-
-### Pipeline Stages
-
-1. **Test**: Maven tests with caching
-2. **Build**: Docker image build and push to GHCR
-3. **Deploy**: Kubernetes deployment with Kustomize
-4. **Security**: Trivy vulnerability scanning
+- **Push to `main or develop`**: Full CI/CD pipeline (build → deploy)
 
 ## 📁 Project Structure
 
